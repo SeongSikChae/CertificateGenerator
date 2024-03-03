@@ -1,0 +1,16 @@
+OrganizationName: SERVER
+CommonName: localhost
+Days: 3650
+KeyFile: "keys/server.key"
+CertificateFile: "certs/server.crt"
+StoreFile: "store/server.p12"
+StorePassword: 1234
+Alias: server
+CAStoreFile: "store/ca.p12"
+CAStorePassword: 1234
+AlternativeNames:
+- "localhost"
+AlternativeAddresses:
+- "127.0.0.1"    
+CAKeyFile: "keys/ca.key"
+WithCA: false

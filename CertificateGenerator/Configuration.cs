@@ -28,11 +28,9 @@ namespace CertificateGenerator
         [Property(PropertyAttribute.PropertyType.STRING)]
         public string? Email { get; set; }
 
-        [Property(PropertyAttribute.PropertyType.STRING)]
-        public string? AlternativeNames { get; set; }
+        public List<string> AlternativeNames { get; set; } = new List<string>();
 
-        [Property(PropertyAttribute.PropertyType.STRING)]
-        public string? AlternativeAddresses { get; set; }
+        public List<string> AlternativeAddresses { get; set; } = new List<string>();
 
         [Property(PropertyAttribute.PropertyType.INT, DefaultValue = "3650")]
         public virtual int? Days { get; set; }
