@@ -1,4 +1,5 @@
 ﻿using CommandLine;
+using Org.BouncyCastle.Asn1;
 using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Asn1.X509;
 using Org.BouncyCastle.Crypto;
@@ -31,6 +32,7 @@ namespace CertificateGenerator
                         case GenerateMode.CLIENT:
                             break;
                         case GenerateMode.SERVER:
+                            await GenerateServerCertificate(cmdMain);
                             break;
                         default:
                             throw new InvalidOperationException($"unknown mode '{cmdMain.Mode}'");
@@ -42,7 +44,7 @@ namespace CertificateGenerator
                     PrintVersion(errors.Output());
                 await Task.CompletedTask;
             });
-        }
+        }        
 
         static async Task GenerateCACertificate(CmdMain cmdMain)
         {
@@ -55,15 +57,27 @@ namespace CertificateGenerator
 
             SecureRandom secureRandom = new SecureRandom();
 
+            GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+            X509Name dn = GenerateDN(configuration);
+
+            X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CA);
+
+            GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, certificate);
+
+            await Task.CompletedTask;
+        }
+
+        private static void GenerateKey(int keySize, string keyFile,  SecureRandom secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo)
+        {
             IAsymmetricCipherKeyPairGenerator generator = new RsaKeyPairGenerator();
-            KeyGenerationParameters parameters = new KeyGenerationParameters(secureRandom, configuration.KeySize.Value);
+            KeyGenerationParameters parameters = new KeyGenerationParameters(secureRandom, keySize);
             generator.Init(parameters);
-            Console.WriteLine($"key pair generate... : {configuration.KeySize.Value}");
-            AsymmetricCipherKeyPair keyPair = generator.GenerateKeyPair();
-            PrivateKeyInfo privateKeyInfo = PrivateKeyInfoFactory.CreatePrivateKeyInfo(keyPair.Private);
-            SubjectPublicKeyInfo subjectPublicKeyInfo = SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(keyPair.Public);
+            Console.WriteLine($"key pair generate... : {keySize}");
+            keyPair = generator.GenerateKeyPair();
+            privateKeyInfo = PrivateKeyInfoFactory.CreatePrivateKeyInfo(keyPair.Private);
+            subjectPublicKeyInfo = SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(keyPair.Public);
             PemObject pemObject = new PemObject("PRIVATE KEY", privateKeyInfo.GetEncoded());
-            FileInfo privateKeyFileInfo = new FileInfo(configuration.KeyFile);
+            FileInfo privateKeyFileInfo = new FileInfo(keyFile);
             if (privateKeyFileInfo.Directory is not null && !privateKeyFileInfo.Directory.Exists)
                 privateKeyFileInfo.Directory.Create();
             using (FileStream stream = new FileStream(privateKeyFileInfo.FullName, FileMode.Create, FileAccess.Write))
@@ -73,48 +87,7 @@ namespace CertificateGenerator
                 pemWriter.WriteObject(pemObject);
             }
             Console.WriteLine($"Private Key File Write : {privateKeyFileInfo.FullName}");
-            X509Name dn = GenerateDN(configuration);
-
-            X509V3CertificateGenerator certificateGenerator = new X509V3CertificateGenerator();
-            Org.BouncyCastle.Math.BigInteger serial = new Org.BouncyCastle.Math.BigInteger(serialNumber.Value.ToString());
-            certificateGenerator.SetSerialNumber(serial);
-            certificateGenerator.SetIssuerDN(dn);
-            certificateGenerator.SetSubjectDN(dn);
-
-            DateTime notBefore = DateTime.Now;
-            certificateGenerator.SetNotBefore(notBefore);
-            certificateGenerator.SetNotAfter(notBefore.AddDays(configuration.Days.Value));
-            certificateGenerator.SetPublicKey(keyPair.Public);
-            certificateGenerator.AddExtension(X509Extensions.SubjectKeyIdentifier, false, new SubjectKeyIdentifier(subjectPublicKeyInfo));
-            certificateGenerator.AddExtension(X509Extensions.AuthorityKeyIdentifier, false, new AuthorityKeyIdentifier(subjectPublicKeyInfo, new GeneralNames(new GeneralName(dn)), serial));
-            certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.KeyCertSign | KeyUsage.CrlSign));
-            certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(true));
-
-            ISignatureFactory signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), keyPair.Private);
-            X509Certificate certificate = certificateGenerator.Generate(signatureFactory);
-            Console.WriteLine(certificate);
-
-            FileInfo certificateFileInfo = new FileInfo(configuration.CertificateFile);
-            if (certificateFileInfo.Directory is not null && !certificateFileInfo.Directory.Exists)
-                certificateFileInfo.Directory.Create();
-            using FileStream certificateStream = new FileStream(certificateFileInfo.FullName, FileMode.Create, FileAccess.Write);
-            certificateStream.Write(certificate.GetEncoded());
-            Console.WriteLine($"Certificate File Write : {certificateFileInfo.FullName}");
-
-            Pkcs12Store store = new Pkcs12StoreBuilder().Build();
-            store.SetKeyEntry(configuration.Alias, new AsymmetricKeyEntry(keyPair.Private), new X509CertificateEntry[] { new X509CertificateEntry(certificate) });
-
-            FileInfo storeFileInfo = new FileInfo(configuration.StoreFile);
-            if (storeFileInfo.Directory is not null && !storeFileInfo.Directory.Exists)
-                storeFileInfo.Directory.Create();
-            using FileStream pkcs12Stream = new FileStream(configuration.StoreFile, FileMode.Create, FileAccess.Write);
-            store.Save(pkcs12Stream, configuration.StorePassword.ToCharArray(), secureRandom);
-            Console.WriteLine($"PKCS12 Store File Write : {storeFileInfo.FullName}");
-
-            await Task.CompletedTask;
         }
-
-        private static readonly AtomicInt64 serialNumber = new AtomicInt64(DateTime.Now.ToMilliseconds());
 
         private static X509Name GenerateDN(Configuration configuration)
         {
@@ -132,6 +105,162 @@ namespace CertificateGenerator
             if (configuration.Email is not null)
                 dnBuilder.Append($", E={configuration.Email}");
             return new X509Name(dnBuilder.ToString());
+        }
+
+        private static X509Certificate GenerateCertificate(X509Name dn, int days, AsymmetricKeyParameter publicKey, SubjectPublicKeyInfo subjectPublicKeyInfo, AsymmetricKeyParameter privateKey, string certificateFile, GenerateMode mode, List<string>? alternativeNames = null, List<string>? alternativeAddresses = null, AsymmetricKeyParameter? caPrivateKey = null, X509Certificate? caCertificate = null)
+        {
+            X509V3CertificateGenerator certificateGenerator = new X509V3CertificateGenerator();
+            Org.BouncyCastle.Math.BigInteger serial = new Org.BouncyCastle.Math.BigInteger(serialNumber.Value.ToString());
+            certificateGenerator.SetSerialNumber(serial);
+            certificateGenerator.SetIssuerDN(caCertificate is null ? dn : caCertificate.IssuerDN);
+            certificateGenerator.SetSubjectDN(dn);
+
+            DateTime notBefore = DateTime.Now;
+            certificateGenerator.SetNotBefore(notBefore);
+            certificateGenerator.SetNotAfter(notBefore.AddDays(days));
+            certificateGenerator.SetPublicKey(publicKey);
+            certificateGenerator.AddExtension(X509Extensions.SubjectKeyIdentifier, false, new SubjectKeyIdentifier(subjectPublicKeyInfo));
+            certificateGenerator.AddExtension(X509Extensions.AuthorityKeyIdentifier, false, new AuthorityKeyIdentifier(caCertificate is null ? subjectPublicKeyInfo : caCertificate.SubjectPublicKeyInfo, 
+                new GeneralNames(new GeneralName(caCertificate is null ? dn : caCertificate.IssuerDN)), caCertificate is null ? serial : caCertificate.SerialNumber));
+
+            Asn1EncodableVector purposes = new Asn1EncodableVector();
+            switch (mode)
+            {
+                case GenerateMode.CA:
+                    certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.KeyCertSign | KeyUsage.CrlSign));
+                    certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(true));
+                    break;
+                case GenerateMode.CLIENT:
+                    break;
+                case GenerateMode.SERVER:
+                    certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
+                    certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(false));
+
+                    purposes.Add(KeyPurposeID.id_kp_serverAuth);
+                    certificateGenerator.AddExtension(X509Extensions.ExtendedKeyUsage, false, new DerSequence(purposes));
+                    break;
+            }
+
+            List<GeneralName> generalNames = new List<GeneralName>();
+            if (alternativeNames is not null)
+            {
+                foreach (string name in alternativeNames)
+                    generalNames.Add(new GeneralName(GeneralName.DnsName, name));
+            }
+
+            if (alternativeAddresses is not null)
+            {
+                foreach (string address in alternativeAddresses)
+                    generalNames.Add(new GeneralName(GeneralName.IPAddress, address));
+            }
+
+            if (generalNames.Count > 0)
+            {
+                GeneralNames subjectAlternativeNames = new GeneralNames(generalNames.ToArray());
+                certificateGenerator.AddExtension(X509Extensions.SubjectAlternativeName, false, subjectAlternativeNames);
+            }
+
+            ISignatureFactory signatureFactory;
+            X509Certificate certificate;
+            switch (mode)
+            {
+                case GenerateMode.CA:
+                    signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), privateKey);
+                    certificate = certificateGenerator.Generate(signatureFactory);
+                    SignCertificate(certificate, publicKey);
+                    break;
+                default:
+                    ArgumentNullException.ThrowIfNull(caCertificate);
+                    signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), caPrivateKey);
+                    certificate = certificateGenerator.Generate(signatureFactory);
+                    SignCertificate(certificate, caCertificate.GetPublicKey());
+                    break;
+            }            
+
+            Console.WriteLine(certificate);
+
+            FileInfo certificateFileInfo = new FileInfo(certificateFile);
+            if (certificateFileInfo.Directory is not null && !certificateFileInfo.Directory.Exists)
+                certificateFileInfo.Directory.Create();
+            using FileStream certificateStream = new FileStream(certificateFileInfo.FullName, FileMode.Create, FileAccess.Write);
+            certificateStream.Write(certificate.GetEncoded());
+            Console.WriteLine($"Certificate File Write : {certificateFileInfo.FullName}");
+
+            return certificate;
+        }
+
+        private static readonly AtomicInt64 serialNumber = new AtomicInt64(DateTime.Now.ToMilliseconds());
+
+        private static void SignCertificate(X509Certificate certificate, ICipherParameters pubKey)
+        {
+            byte[] tbsCert = certificate.GetTbsCertificate();
+            byte[] signature = certificate.GetSignature();
+
+            ISigner signer = SignerUtilities.GetSigner(certificate.SigAlgName);
+            signer.Init(false, pubKey);
+            signer.BlockUpdate(tbsCert, 0, tbsCert.Length);
+        }
+
+        private static void GenerateCertificateStore(string alias, AsymmetricKeyParameter privateKey, string storeFile, string storePassword, SecureRandom secureRandom, params X509Certificate[] certificate)
+        {
+            X509CertificateEntry[] entryArray = new X509CertificateEntry[certificate.Length];
+            for (int index = 0; index < entryArray.Length; index++)
+                entryArray[index] = new X509CertificateEntry(certificate[index]);
+
+            Pkcs12Store store = new Pkcs12StoreBuilder().Build();
+            store.SetKeyEntry(alias, new AsymmetricKeyEntry(privateKey), entryArray);
+
+            FileInfo storeFileInfo = new FileInfo(storeFile);
+            if (storeFileInfo.Directory is not null && !storeFileInfo.Directory.Exists)
+                storeFileInfo.Directory.Create();
+            using FileStream pkcs12Stream = new FileStream(storeFileInfo.FullName, FileMode.Create, FileAccess.Write);
+            store.Save(pkcs12Stream, storePassword.ToCharArray(), secureRandom);
+            Console.WriteLine($"PKCS12 Store File Write : {storeFileInfo.FullName}");
+        }
+
+        private static async Task GenerateServerCertificate(CmdMain cmdMain)
+        {
+            YamlDotNet.Serialization.Deserializer deserializer = new YamlDotNet.Serialization.Deserializer();
+            string str = File.ReadAllText(cmdMain.ConfigFilePath);
+            ServerCertificateConfiguration configuration = deserializer.Deserialize<ServerCertificateConfiguration>(str);
+            ConfigurationValidator.Validate(configuration);
+            ArgumentNullException.ThrowIfNull(configuration.KeySize);
+            ArgumentNullException.ThrowIfNull(configuration.Days);
+
+            SecureRandom secureRandom = new SecureRandom();
+
+            GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+            X509Name dn = GenerateDN(configuration);
+
+            FileInfo caStoreFileInfo = new FileInfo(configuration.CAStoreFile);
+            if (caStoreFileInfo.Directory is not null && !caStoreFileInfo.Directory.Exists)
+                caStoreFileInfo.Directory.Create();
+            using FileStream caStoreStream = new FileStream(caStoreFileInfo.FullName, FileMode.Open, FileAccess.Read);
+            Pkcs12Store caStore = new Pkcs12StoreBuilder().Build();
+            caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
+
+            X509CertificateEntry caCertificateEntry = caStore.GetCertificate(caStore.Aliases.First());
+            AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
+
+            X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.SERVER, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntry.Certificate);
+
+            GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? new X509Certificate[] { certificate, caCertificateEntry.Certificate } : new X509Certificate[] { certificate });
+
+            await Task.CompletedTask;
+        }
+
+        private static AsymmetricKeyParameter LoadPrivateKey(string keyFile)
+        {
+            FileInfo keyFileInfo = new FileInfo(keyFile);
+            if (keyFileInfo.Directory is not null && !keyFileInfo.Directory.Exists)
+                keyFileInfo.Directory.Create();
+            using (FileStream stream = new FileStream(keyFileInfo.FullName, FileMode.Open, FileAccess.Read)) 
+            {
+                using StreamReader reader = new StreamReader(stream);
+                using PemReader pemReader = new PemReader(reader);
+                PemObject pemObject = pemReader.ReadPemObject();
+                return PrivateKeyFactory.CreateKey(pemObject.Content);
+            }
         }
 
         internal static void PrintVersion(TextWriter writer)

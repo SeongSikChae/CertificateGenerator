@@ -20,6 +20,6 @@ namespace CertificateGenerator
         public string StorePassword { get; set; } = string.Empty;
 
         [Property(PropertyAttribute.PropertyType.STRING, required: false, DefaultValue = "ca")]
-        public string? Alias { get; set; }
+        public string Alias { get; set; } = string.Empty;
     }
 }
