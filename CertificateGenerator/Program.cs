@@ -30,6 +30,7 @@ namespace CertificateGenerator
                             await GenerateCACertificate(cmdMain);
                             break;
                         case GenerateMode.CLIENT:
+                            await GenerateClientCertificate(cmdMain);
                             break;
                         case GenerateMode.SERVER:
                             await GenerateServerCertificate(cmdMain);
@@ -62,6 +63,7 @@ namespace CertificateGenerator
 
             X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CA);
 
+            ArgumentNullException.ThrowIfNull(configuration.Alias);
             GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, certificate);
 
             await Task.CompletedTask;
@@ -131,6 +133,11 @@ namespace CertificateGenerator
                     certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(true));
                     break;
                 case GenerateMode.CLIENT:
+                    certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
+                    certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(false));
+
+                    purposes.Add(KeyPurposeID.id_kp_clientAuth);
+                    certificateGenerator.AddExtension(X509Extensions.ExtendedKeyUsage, false, new DerSequence(purposes));
                     break;
                 case GenerateMode.SERVER:
                     certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
@@ -259,8 +266,47 @@ namespace CertificateGenerator
                 using StreamReader reader = new StreamReader(stream);
                 using PemReader pemReader = new PemReader(reader);
                 PemObject pemObject = pemReader.ReadPemObject();
-                return PrivateKeyFactory.CreateKey(pemObject.Content);
+                switch (pemObject.Type)
+                {
+                    case "RSA PRIVATE KEY":
+                        RsaPrivateKeyStructure rsaPrivateKeyStructure = RsaPrivateKeyStructure.GetInstance(pemObject.Content);
+                        PrivateKeyInfo privateKeyInfo = new PrivateKeyInfo(new AlgorithmIdentifier(PkcsObjectIdentifiers.RsaEncryption, DerNull.Instance), rsaPrivateKeyStructure);
+                        return PrivateKeyFactory.CreateKey(privateKeyInfo);
+                    default:
+                        return PrivateKeyFactory.CreateKey(pemObject.Content);
+                }
             }
+        }
+
+        private static async Task GenerateClientCertificate(CmdMain cmdMain)
+        {
+            YamlDotNet.Serialization.Deserializer deserializer = new YamlDotNet.Serialization.Deserializer();
+            string str = File.ReadAllText(cmdMain.ConfigFilePath);
+            ClientCertificateConfiguration configuration = deserializer.Deserialize<ClientCertificateConfiguration>(str);
+            ConfigurationValidator.Validate(configuration);
+            ArgumentNullException.ThrowIfNull(configuration.KeySize);
+            ArgumentNullException.ThrowIfNull(configuration.Days);
+
+            SecureRandom secureRandom = new SecureRandom();
+
+            GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+            X509Name dn = GenerateDN(configuration);
+
+            FileInfo caStoreFileInfo = new FileInfo(configuration.CAStoreFile);
+            if (caStoreFileInfo.Directory is not null && !caStoreFileInfo.Directory.Exists)
+                caStoreFileInfo.Directory.Create();
+            using FileStream caStoreStream = new FileStream(caStoreFileInfo.FullName, FileMode.Open, FileAccess.Read);
+            Pkcs12Store caStore = new Pkcs12StoreBuilder().Build();
+            caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
+
+            X509CertificateEntry caCertificateEntry = caStore.GetCertificate(caStore.Aliases.First());
+            AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
+
+            X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CLIENT, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntry.Certificate);
+
+            GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? new X509Certificate[] { certificate, caCertificateEntry.Certificate } : new X509Certificate[] { certificate });
+
+            await Task.CompletedTask;
         }
 
         internal static void PrintVersion(TextWriter writer)
