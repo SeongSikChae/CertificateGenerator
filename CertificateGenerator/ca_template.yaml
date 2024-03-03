@@ -1,0 +1,8 @@
+OrganizationName: CA
+CommonName: localhost
+Days: 7300
+KeyFile: "ca.key"
+CertificateFile: "ca.crt"
+StoreFile: "ca.p12"
+StorePassword: 1234
+Alias: ca
