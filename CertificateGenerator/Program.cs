@@ -63,13 +63,16 @@ namespace CertificateGenerator
             PrivateKeyInfo privateKeyInfo = PrivateKeyInfoFactory.CreatePrivateKeyInfo(keyPair.Private);
             SubjectPublicKeyInfo subjectPublicKeyInfo = SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(keyPair.Public);
             PemObject pemObject = new PemObject("PRIVATE KEY", privateKeyInfo.GetEncoded());
-            using (FileStream stream = new FileStream(configuration.KeyFile, FileMode.Create, FileAccess.Write))
+            FileInfo privateKeyFileInfo = new FileInfo(configuration.KeyFile);
+            if (privateKeyFileInfo.Directory is not null && !privateKeyFileInfo.Directory.Exists)
+                privateKeyFileInfo.Directory.Create();
+            using (FileStream stream = new FileStream(privateKeyFileInfo.FullName, FileMode.Create, FileAccess.Write))
             {
                 using StreamWriter writer = new StreamWriter(stream);
                 using PemWriter pemWriter = new PemWriter(writer);
                 pemWriter.WriteObject(pemObject);
             }
-            Console.WriteLine($"Private Key File Write : {new FileInfo(configuration.KeyFile).FullName}");
+            Console.WriteLine($"Private Key File Write : {privateKeyFileInfo.FullName}");
             StringBuilder dnBuilder = new StringBuilder($"CN={configuration.CommonName}");
             if (configuration.OrganizationName is not null)
                 dnBuilder.Append($", O={configuration.OrganizationName}");
@@ -94,16 +97,22 @@ namespace CertificateGenerator
             X509Certificate certificate = certificateGenerator.Generate(signatureFactory);
             Console.WriteLine(certificate);
 
-            using FileStream certificateStream = new FileStream(configuration.CertificateFile, FileMode.Create, FileAccess.Write);
+            FileInfo certificateFileInfo = new FileInfo(configuration.CertificateFile);
+            if (certificateFileInfo.Directory is not null && !certificateFileInfo.Directory.Exists)
+                certificateFileInfo.Directory.Create();
+            using FileStream certificateStream = new FileStream(certificateFileInfo.FullName, FileMode.Create, FileAccess.Write);
             certificateStream.Write(certificate.GetEncoded());
-            Console.WriteLine($"Certificate File Write : {new FileInfo(configuration.CertificateFile).FullName}");
+            Console.WriteLine($"Certificate File Write : {certificateFileInfo.FullName}");
 
             Pkcs12Store store = new Pkcs12StoreBuilder().Build();
             store.SetKeyEntry(configuration.Alias, new AsymmetricKeyEntry(keyPair.Private), new X509CertificateEntry[] { new X509CertificateEntry(certificate) });
 
+            FileInfo storeFileInfo = new FileInfo(configuration.StoreFile);
+            if (storeFileInfo.Directory is not null && !storeFileInfo.Directory.Exists)
+                storeFileInfo.Directory.Create();
             using FileStream pkcs12Stream = new FileStream(configuration.StoreFile, FileMode.Create, FileAccess.Write);
             store.Save(pkcs12Stream, configuration.StorePassword.ToCharArray(), secureRandom);
-            Console.WriteLine($"PKCS12 Store File Write : {new FileInfo(configuration.StoreFile).FullName}");
+            Console.WriteLine($"PKCS12 Store File Write : {storeFileInfo.FullName}");
 
             await Task.CompletedTask;
         }
