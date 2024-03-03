@@ -73,10 +73,7 @@ namespace CertificateGenerator
                 pemWriter.WriteObject(pemObject);
             }
             Console.WriteLine($"Private Key File Write : {privateKeyFileInfo.FullName}");
-            StringBuilder dnBuilder = new StringBuilder($"CN={configuration.CommonName}");
-            if (configuration.OrganizationName is not null)
-                dnBuilder.Append($", O={configuration.OrganizationName}");
-            X509Name dn = new X509Name(dnBuilder.ToString());
+            X509Name dn = GenerateDN(configuration);
 
             X509V3CertificateGenerator certificateGenerator = new X509V3CertificateGenerator();
             Org.BouncyCastle.Math.BigInteger serial = new Org.BouncyCastle.Math.BigInteger(serialNumber.Value.ToString());
@@ -118,6 +115,24 @@ namespace CertificateGenerator
         }
 
         private static readonly AtomicInt64 serialNumber = new AtomicInt64(DateTime.Now.ToMilliseconds());
+
+        private static X509Name GenerateDN(Configuration configuration)
+        {
+            StringBuilder dnBuilder = new StringBuilder($"CN={configuration.CommonName}");
+            if (configuration.OrganizationName is not null)
+                dnBuilder.Append($", O={configuration.OrganizationName}");
+            if (configuration.OrganizationalUnitName is not null)
+                dnBuilder.Append($", OU={configuration.OrganizationalUnitName}");
+            if (configuration.LocalityName is not null)
+                dnBuilder.Append($", L={configuration.LocalityName}");
+            if (configuration.StateOrProvinceName is not null)
+                dnBuilder.Append($", ST={configuration.StateOrProvinceName}");
+            if (configuration.CountryName is not null)
+                dnBuilder.Append($", C={configuration.CountryName}");
+            if (configuration.Email is not null)
+                dnBuilder.Append($", E={configuration.Email}");
+            return new X509Name(dnBuilder.ToString());
+        }
 
         internal static void PrintVersion(TextWriter writer)
         {
