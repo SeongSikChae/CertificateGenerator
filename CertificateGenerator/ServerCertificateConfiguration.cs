@@ -2,7 +2,7 @@
 
 namespace CertificateGenerator
 {
-    public sealed class ServerCertificateConfiguration : Configuration
+    public class ServerCertificateConfiguration : Configuration
     {
         [Property(PropertyAttribute.PropertyType.INT, DefaultValue = "3650")]
         public override int? Days { get; set; }
@@ -20,7 +20,7 @@ namespace CertificateGenerator
         public string StorePassword { get; set; } = string.Empty;
 
         [Property(PropertyAttribute.PropertyType.STRING, required: false, DefaultValue = "server")]
-        public string Alias { get; set; } = string.Empty;
+        public virtual string Alias { get; set; } = string.Empty;
 
         [Property(PropertyAttribute.PropertyType.STRING, required: true)]
         public string CAStoreFile { get; set; } = string.Empty;
