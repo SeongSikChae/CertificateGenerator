@@ -266,14 +266,15 @@ namespace CertificateGenerator
                 using StreamReader reader = new StreamReader(stream);
                 using PemReader pemReader = new PemReader(reader);
                 PemObject pemObject = pemReader.ReadPemObject();
-                switch (pemObject.Type)
+                try
                 {
-                    case "RSA PRIVATE KEY":
-                        RsaPrivateKeyStructure rsaPrivateKeyStructure = RsaPrivateKeyStructure.GetInstance(pemObject.Content);
-                        PrivateKeyInfo privateKeyInfo = new PrivateKeyInfo(new AlgorithmIdentifier(PkcsObjectIdentifiers.RsaEncryption, DerNull.Instance), rsaPrivateKeyStructure);
-                        return PrivateKeyFactory.CreateKey(privateKeyInfo);
-                    default:
-                        return PrivateKeyFactory.CreateKey(pemObject.Content);
+                    RsaPrivateKeyStructure rsaPrivateKeyStructure = RsaPrivateKeyStructure.GetInstance(pemObject.Content);
+                    PrivateKeyInfo privateKeyInfo = new PrivateKeyInfo(new AlgorithmIdentifier(PkcsObjectIdentifiers.RsaEncryption, DerNull.Instance), rsaPrivateKeyStructure);
+                    return PrivateKeyFactory.CreateKey(privateKeyInfo);
+                } 
+                catch(Exception)
+                {
+                    return PrivateKeyFactory.CreateKey(pemObject.Content);
                 }
             }
         }
