@@ -13,6 +13,8 @@
 	<ItemGroup>
 		<PackageReference Include="BouncyCastle.Cryptography" Version="2.3.1" />
 		<PackageReference Include="CommandLineParser" Version="2.9.1" />
+		<PackageReference Include="System.Configuration.Extensions" Version="1.0.0" />
+		<PackageReference Include="System.Threading.Extensions" Version="1.0.0" />
 		<PackageReference Include="YamlDotNet" Version="15.1.6" />
 	</ItemGroup>
 

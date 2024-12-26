@@ -16,7 +16,7 @@ using System.Threading.Atomic;
 
 namespace CertificateGenerator
 {
-    internal class Program
+	internal class Program
     {
         static async Task Main(string[] args)
         {
@@ -35,7 +35,10 @@ namespace CertificateGenerator
                         case GenerateMode.SERVER:
                             await GenerateServerCertificate(cmdMain);
                             break;
-                        default:
+                        case GenerateMode.CODESIGN:
+                            await GenerateCodeSignCertificate(cmdMain);
+                            break;
+						default:
                             throw new InvalidOperationException($"unknown mode '{cmdMain.Mode}'");
                     }
                 });
@@ -144,6 +147,13 @@ namespace CertificateGenerator
                     certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(false));
 
                     purposes.Add(KeyPurposeID.id_kp_serverAuth);
+                    certificateGenerator.AddExtension(X509Extensions.ExtendedKeyUsage, false, new DerSequence(purposes));
+                    break;
+                case GenerateMode.CODESIGN:
+                    certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.KeyEncipherment | KeyUsage.DataEncipherment));
+                    certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(false));
+
+                    purposes.Add(KeyPurposeID.id_kp_codeSigning);
                     certificateGenerator.AddExtension(X509Extensions.ExtendedKeyUsage, false, new DerSequence(purposes));
                     break;
             }
@@ -310,7 +320,38 @@ namespace CertificateGenerator
             await Task.CompletedTask;
         }
 
-        internal static void PrintVersion(TextWriter writer)
+        private static async Task GenerateCodeSignCertificate(CmdMain cmdMain)
+        {
+			YamlDotNet.Serialization.Deserializer deserializer = new YamlDotNet.Serialization.Deserializer();
+			string str = File.ReadAllText(cmdMain.ConfigFilePath);
+			CodeSignCertificateConfiguration configuration = deserializer.Deserialize<CodeSignCertificateConfiguration>(str);
+			ConfigurationValidator.Validate(configuration);
+			ArgumentNullException.ThrowIfNull(configuration.KeySize);
+			ArgumentNullException.ThrowIfNull(configuration.Days);
+
+            SecureRandom secureRandom = new SecureRandom();
+
+			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			X509Name dn = GenerateDN(configuration);
+
+			FileInfo caStoreFileInfo = new FileInfo(configuration.CAStoreFile);
+			if (caStoreFileInfo.Directory is not null && !caStoreFileInfo.Directory.Exists)
+				caStoreFileInfo.Directory.Create();
+			using FileStream caStoreStream = new FileStream(caStoreFileInfo.FullName, FileMode.Open, FileAccess.Read);
+			Pkcs12Store caStore = new Pkcs12StoreBuilder().Build();
+			caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
+
+			X509CertificateEntry caCertificateEntry = caStore.GetCertificate(caStore.Aliases.First());
+			AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
+
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CODESIGN, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntry.Certificate);
+
+			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? new X509Certificate[] { certificate, caCertificateEntry.Certificate } : new X509Certificate[] { certificate });
+
+			await Task.CompletedTask;
+		}
+
+		internal static void PrintVersion(TextWriter writer)
         {
             RevisionAttribute? revisionAttribute = typeof(RevisionAttribute).Assembly.GetCustomAttribute<RevisionAttribute>();
             if (revisionAttribute is not null)
@@ -328,7 +369,7 @@ namespace CertificateGenerator
 
         internal enum GenerateMode
         {
-            CA, SERVER, CLIENT
+            CA, SERVER, CLIENT, CODESIGN
         }
     }
 }

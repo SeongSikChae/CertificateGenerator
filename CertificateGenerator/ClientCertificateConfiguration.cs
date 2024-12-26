@@ -1,13 +1,13 @@
-﻿using System.Configuration.Attributes;
+﻿using System.Configuration.Annotation;
 
 namespace CertificateGenerator
 {
     public sealed class ClientCertificateConfiguration : ServerCertificateConfiguration
     {
-        [Property(PropertyAttribute.PropertyType.INT, DefaultValue = "365")]
+        [Property(PropertyType.INT, DefaultValue = "365")]
         public override int? Days { get; set; }
 
-        [Property(PropertyAttribute.PropertyType.STRING, required: false, DefaultValue = "client")]
+        [Property(PropertyType.STRING, required: false, DefaultValue = "client")]
         public override string Alias { get; set; } = string.Empty;
     }
 }
