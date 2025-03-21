@@ -23,6 +23,29 @@ Alias: ca
 CertificateGenerator.exe --config ca.yaml --mode CA
 </pre>
 
+### Middle CA 인증서 생성
+
+### middle_ca_template.yaml
+<pre>
+# Middle CA 인증서 생성을 위한 설정
+OrganizationName: MiddleCA
+CommonName: localhost
+Days: 7300
+KeyFile: "keys/middle_ca.key"
+CertificateFile: "certs/middle_ca.crt"
+StoreFile: "store/middle_ca.p12"
+StorePassword: 1234
+Alias: middle_ca
+CAStoreFile: "store/ca.p12" # CA PKCS12 파일 위치
+CAStorePassword: 1234 # CA PKCS12 패스워드
+CAKeyFile: "keys/ca.key" # CA 인증서 키 파일 위치
+WithCA: false # 서버 인증서 PKCS12 파일에 CA 인증서를 포함할 것인지 여부
+</pre>
+
+<pre>
+CertificateGenerator.exe --config middle_ca_template.yaml --mode MIDDLE_CA
+</pre>
+
 ### 서버 인증서 생성
 
 #### server_template.yaml
@@ -35,7 +58,7 @@ CertificateFile: "certs/server.crt" # 인증서 파일 생성 위치
 StoreFile: "store/server.p12" # PKCS12 파일 생성 위치
 StorePassword: 1234 # PKCS12 패스워드
 Alias: server
-CAStoreFile: "store/ca.p12" # CA PKCS12 파일 위치
+CAStoreFile: "store/middle_ca.p12" # CA PKCS12 파일 위치
 CAStorePassword: 1234 # CA PKCS12 패스워드
 # 추가적인 서버 도메인
 AlternativeNames:
@@ -43,8 +66,8 @@ AlternativeNames:
 # 추가적인 서버 IP
 AlternativeAddresses:
 - "127.0.0.1"    
-CAKeyFile: "keys/ca.key" # CA 인증서 키 파일 위치
-WithCA: false # 서버 인증서 PKCS12 파일에 CA 인증서를 포함할 것인지 여부
+CAKeyFile: "keys/middle_ca.key" # CA 인증서 키 파일 위치
+WithCA: true # 서버 인증서 PKCS12 파일에 CA 인증서를 포함할 것인지 여부
 </pre>
 
 <pre>
