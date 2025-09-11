@@ -1,0 +1,15 @@
+OrganizationName: SelfSigned Server
+CommonName: localhost
+Days: 3650
+KeyFile: "keys/selfsigned-server.key"
+CertificateFile: "certs/selfsigned-server.crt"
+StoreFile: "store/selfsigned-server.p12"
+StorePassword: 1234
+Alias: selfsigned-server
+AlternativeNames:
+- "localhost"
+- "*.localhost"
+AlternativeAddresses:
+- "127.0.0.1"
+- "::1"
+

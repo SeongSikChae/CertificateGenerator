@@ -1,5 +1,6 @@
 ﻿using CommandLine;
 using Org.BouncyCastle.Asn1;
+using Org.BouncyCastle.Asn1.Nist;
 using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Asn1.X509;
 using Org.BouncyCastle.Crypto;
@@ -7,6 +8,7 @@ using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Operators;
 using Org.BouncyCastle.Pkcs;
 using Org.BouncyCastle.Security;
+using Org.BouncyCastle.Tls;
 using Org.BouncyCastle.Utilities.IO.Pem;
 using Org.BouncyCastle.X509;
 using System.Configuration;
@@ -41,6 +43,12 @@ namespace CertificateGenerator
 							break;
 						case GenerateMode.CODESIGN:
 							await GenerateCodeSignCertificate(cmdMain);
+							break;
+						case GenerateMode.SELFSIGNED_SERVER:
+							await GenerateSelfSignedServerCertificate(cmdMain);
+							break;
+						case GenerateMode.TRUSTSTORE:
+							await GenerateTrustStore(cmdMain);
 							break;
 						default:
 							throw new InvalidOperationException($"unknown mode '{cmdMain.Mode}'");
@@ -235,6 +243,12 @@ namespace CertificateGenerator
 					certificate = certificateGenerator.Generate(signatureFactory);
 					SignCertificate(certificate, publicKey);
 					break;
+				case GenerateMode.SERVER when caCertificate is null:
+					// Self-signed server certificate
+					signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), privateKey);
+					certificate = certificateGenerator.Generate(signatureFactory);
+					SignCertificate(certificate, publicKey);
+					break;
 				default:
 					ArgumentNullException.ThrowIfNull(caCertificate);
 					signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), caPrivateKey);
@@ -281,7 +295,7 @@ namespace CertificateGenerator
 			for (int index = 0; index < entryArray.Length; index++)
 				entryArray[index] = new X509CertificateEntry(certificate[index]);
 
-			Pkcs12Store store = new Pkcs12StoreBuilder().Build();
+			Pkcs12Store store = new Pkcs12StoreBuilder().SetKeyAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).SetCertAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).Build();
 			store.SetKeyEntry(alias, new AsymmetricKeyEntry(privateKey), entryArray);
 
 			FileInfo storeFileInfo = new FileInfo(storeFile);
@@ -408,7 +422,97 @@ namespace CertificateGenerator
 			await Task.CompletedTask;
 		}
 
-		internal static void PrintVersion(TextWriter writer)
+		private static async Task GenerateSelfSignedServerCertificate(CmdMain cmdMain)
+		{
+			YamlDotNet.Serialization.Deserializer deserializer = new YamlDotNet.Serialization.Deserializer();
+			string str = File.ReadAllText(cmdMain.ConfigFilePath);
+			SelfSignedServerCertificateConfiguration configuration = deserializer.Deserialize<SelfSignedServerCertificateConfiguration>(str);
+			ConfigurationValidator.Validate(configuration);
+			ArgumentNullException.ThrowIfNull(configuration.KeySize);
+			ArgumentNullException.ThrowIfNull(configuration.Days);
+
+			SecureRandom secureRandom = new SecureRandom();
+
+			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			X509Name dn = GenerateDN(configuration, null);
+
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.SERVER, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses);
+
+			ArgumentNullException.ThrowIfNull(configuration.Alias);
+			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, certificate);
+
+			await Task.CompletedTask;
+		}
+
+		private static async Task GenerateTrustStore(CmdMain cmdMain)
+		{
+            YamlDotNet.Serialization.Deserializer deserializer = new YamlDotNet.Serialization.Deserializer();
+            string str = File.ReadAllText(cmdMain.ConfigFilePath);
+			TrustStoreConfiguration configuration = deserializer.Deserialize<TrustStoreConfiguration>(str);
+            ConfigurationValidator.Validate(configuration);
+
+			int certIndex = 0;
+			Dictionary<string, X509Certificate> certificates = new Dictionary<string, X509Certificate>();
+            string[] certAliasArr = configuration.CertAliasList.Split(',');
+            foreach (string certificateFile in configuration.CertificateFiles.Split(','))
+			{
+				using FileStream fs = new FileStream(new FileInfo(certificateFile).FullName, FileMode.Open, FileAccess.Read);
+				using StreamReader reader = new StreamReader(fs);
+				using PemReader pemReader = new PemReader(reader);
+
+				PemObject pemObject = pemReader.ReadPemObject();
+				X509Certificate certificate = new X509Certificate(pemObject.Content);
+				certificates.Add(certAliasArr[certIndex], certificate);
+				certIndex++;
+			}
+
+            Pkcs12Store store = new Pkcs12StoreBuilder().SetKeyAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).SetCertAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).Build();
+            foreach (KeyValuePair<string, X509Certificate> pair in certificates)
+				store.SetCertificateEntry(pair.Key, new X509CertificateEntry(pair.Value));
+
+            FileInfo storeFileInfo = new FileInfo(configuration.StoreFile);
+            if (storeFileInfo.Directory is not null && !storeFileInfo.Directory.Exists)
+                storeFileInfo.Directory.Create();
+            using FileStream pkcs12Stream = new FileStream(storeFileInfo.FullName, FileMode.Create, FileAccess.Write);
+            store.Save(pkcs12Stream, configuration.StorePassword.ToCharArray(), new SecureRandom());
+            Console.WriteLine($"PKCS12 Store File Write : {storeFileInfo.FullName}");
+
+            await Task.CompletedTask;
+        }
+
+        //private static X509Certificate LoadCertificateFromFile(string certificateFile)
+        //{
+        //    FileInfo certificateFileInfo = new FileInfo(certificateFile);
+        //    if (!certificateFileInfo.Exists)
+        //        throw new FileNotFoundException($"Certificate file not found: {certificateFile}");
+
+        //    using (FileStream stream = new FileStream(certificateFileInfo.FullName, FileMode.Open, FileAccess.Read))
+        //    {
+        //        using StreamReader reader = new StreamReader(stream);
+        //        using PemReader pemReader = new PemReader(reader);
+
+        //        PemObject pemObject = pemReader.ReadPemObject();
+        //        if (pemObject == null)
+        //            throw new InvalidOperationException($"Invalid PEM file: {certificateFile}");
+
+        //        // PEM 파일에서 인증서 추출
+        //        if (pemObject.Type == "CERTIFICATE")
+        //        {
+        //            return new X509Certificate(pemObject.Content);
+        //        }
+        //        else
+        //        {
+        //            // PEM 헤더가 없는 경우 직접 DER 형식으로 시도
+        //            stream.Position = 0;
+        //            byte[] certData = new byte[stream.Length];
+        //            stream.Read(certData, 0, certData.Length);
+        //            return new X509Certificate(certData);
+        //        }
+        //    }
+        //}
+
+
+        internal static void PrintVersion(TextWriter writer)
 		{
 			RevisionAttribute? revisionAttribute = typeof(RevisionAttribute).Assembly.GetCustomAttribute<RevisionAttribute>();
 			if (revisionAttribute is not null)
@@ -426,7 +530,7 @@ namespace CertificateGenerator
 
 		internal enum GenerateMode
 		{
-			CA, MIDDLE_CA, SERVER, CLIENT, CODESIGN
+			CA, MIDDLE_CA, SERVER, CLIENT, CODESIGN, SELFSIGNED_SERVER, TRUSTSTORE
 		}
 	}
 }

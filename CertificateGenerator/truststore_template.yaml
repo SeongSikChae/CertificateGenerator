@@ -1,0 +1,5 @@
+CertificateFiles: "certs/ca.crt"
+CertAliasList: "ca"
+StoreFile: "store/ca_trust.p12"
+StorePassword: "1234"
+Alias: "ca_trust"
