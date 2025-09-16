@@ -2,6 +2,8 @@ OrganizationName: SERVER
 CommonName: localhost
 Days: 3650
 KeyType: RSA
+KeySize: 2048
+# ECCurveName: secp256r1
 KeyFile: "keys/server.key"
 CertificateFile: "certs/server.crt"
 StoreFile: "store/server.p12"

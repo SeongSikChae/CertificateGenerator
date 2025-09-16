@@ -3,6 +3,8 @@ CommonName: localhost
 Email: localhost@localhost
 Days: 365
 KeyType: RSA
+KeySize: 2048
+# ECCurveName: secp256r1
 KeyFile: "keys/client.key"
 CertificateFile: "certs/client.crt"
 StoreFile: "store/client.p12"

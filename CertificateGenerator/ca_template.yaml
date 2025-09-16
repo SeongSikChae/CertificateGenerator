@@ -2,6 +2,8 @@ OrganizationName: CA
 CommonName: localhost
 Days: 7300
 KeyType: RSA
+KeySize: 2048
+# ECCurveName: secp256r1
 KeyFile: "keys/ca.key"
 CertificateFile: "certs/ca.crt"
 StoreFile: "store/ca.p12"
