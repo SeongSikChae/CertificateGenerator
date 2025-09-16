@@ -7,6 +7,12 @@ namespace CertificateGenerator
         [Property(PropertyType.INT, DefaultValue = "2048")]
         public int? KeySize { get; set; }
 
+        [Property(PropertyType.STRING, DefaultValue = "secp256r1")]
+        public string ECCurveName { get; set; } = null!;
+
+        [Property(PropertyType.STRING, DefaultValue = "RSA")]
+        public string KeyType { get; set; } = "RSA";
+
         [Property(PropertyType.STRING, DefaultValue = "KR")]
         public string? CountryName { get; set; }
 

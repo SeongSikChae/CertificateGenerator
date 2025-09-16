@@ -1,6 +1,7 @@
 OrganizationName: SERVER
 CommonName: localhost
 Days: 3650
+KeyType: RSA
 KeyFile: "keys/server.key"
 CertificateFile: "certs/server.crt"
 StoreFile: "store/server.p12"

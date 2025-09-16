@@ -1,6 +1,5 @@
 ﻿using CommandLine;
 using Org.BouncyCastle.Asn1;
-using Org.BouncyCastle.Asn1.Nist;
 using Org.BouncyCastle.Asn1.Pkcs;
 using Org.BouncyCastle.Asn1.X509;
 using Org.BouncyCastle.Crypto;
@@ -8,13 +7,14 @@ using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Operators;
 using Org.BouncyCastle.Pkcs;
 using Org.BouncyCastle.Security;
-using Org.BouncyCastle.Tls;
 using Org.BouncyCastle.Utilities.IO.Pem;
 using Org.BouncyCastle.X509;
 using System.Configuration;
 using System.Reflection;
 using System.Text;
 using System.Threading.Atomic;
+using Org.BouncyCastle.Asn1.X9;
+using Org.BouncyCastle.Crypto.Parameters;
 
 namespace CertificateGenerator
 {
@@ -73,10 +73,10 @@ namespace CertificateGenerator
 
 			SecureRandom secureRandom = new SecureRandom();
 
-			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			GenerateKey(configuration.KeySize.Value, configuration.ECCurveName, configuration.KeyType, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
 			X509Name dn = GenerateDN(configuration, null);
 
-			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CA);
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CA, configuration.KeyType);
 
 			ArgumentNullException.ThrowIfNull(configuration.Alias);
 			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, certificate);
@@ -103,12 +103,12 @@ namespace CertificateGenerator
 			caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
 			X509CertificateEntry[] caCertificateEntries = caStore.GetCertificateChain(caStore.Aliases.First());
 
-			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			GenerateKey(configuration.KeySize.Value, configuration.ECCurveName, configuration.KeyType, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
 			X509Name dn = GenerateDN(configuration, caCertificateEntries[0].Certificate);
 
 			AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
 
-			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.MIDDLE_CA, null, null, caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.MIDDLE_CA, configuration.KeyType, null, null, caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
 
 			ArgumentNullException.ThrowIfNull(configuration.Alias);
 			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? [certificate, ..caCertificateEntries.Select(e => e.Certificate)] : [certificate]);
@@ -116,12 +116,32 @@ namespace CertificateGenerator
 			await Task.CompletedTask;
 		}
 
-		private static void GenerateKey(int keySize, string keyFile, SecureRandom secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo)
+		private static void GenerateKey(int keySize, string ecCurveName, string keyType, string keyFile, SecureRandom secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo)
 		{
-			IAsymmetricCipherKeyPairGenerator generator = new RsaKeyPairGenerator();
-			KeyGenerationParameters parameters = new KeyGenerationParameters(secureRandom, keySize);
+			IAsymmetricCipherKeyPairGenerator generator;
+			KeyGenerationParameters parameters;
+
+			if (keyType.ToUpper() == "EC")
+			{
+                foreach (string n in ECNamedCurveTable.Names)
+					Console.WriteLine(n);
+                // EC 키 생성
+                generator = new ECKeyPairGenerator();
+				ECDomainParameters ecDomainParameters = new ECDomainParameters(ECNamedCurveTable.GetByName(ecCurveName));
+				ECKeyGenerationParameters ecParameters = new ECKeyGenerationParameters(ecDomainParameters, secureRandom);
+				parameters = ecParameters;
+				Console.WriteLine($"EC key pair generate... : {ecCurveName} {parameters.Strength}");
+			}
+
+            else
+			{
+				// RSA 키 생성 (기본값)
+				generator = new RsaKeyPairGenerator();
+				parameters = new KeyGenerationParameters(secureRandom, keySize);
+				Console.WriteLine($"RSA key pair generate... : {keySize}");
+			}
+
 			generator.Init(parameters);
-			Console.WriteLine($"key pair generate... : {keySize}");
 			keyPair = generator.GenerateKeyPair();
 			privateKeyInfo = PrivateKeyInfoFactory.CreatePrivateKeyInfo(keyPair.Private);
 			subjectPublicKeyInfo = SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(keyPair.Public);
@@ -168,7 +188,7 @@ namespace CertificateGenerator
 			return new X509Name(dnBuilder.ToString());
 		}
 
-		private static X509Certificate GenerateCertificate(X509Name dn, int days, AsymmetricKeyParameter publicKey, SubjectPublicKeyInfo subjectPublicKeyInfo, AsymmetricKeyParameter privateKey, string certificateFile, GenerateMode mode, List<string>? alternativeNames = null, List<string>? alternativeAddresses = null, AsymmetricKeyParameter? caPrivateKey = null, X509Certificate? caCertificate = null, bool withCa = false)
+		private static X509Certificate GenerateCertificate(X509Name dn, int days, AsymmetricKeyParameter publicKey, SubjectPublicKeyInfo subjectPublicKeyInfo, AsymmetricKeyParameter privateKey, string certificateFile, GenerateMode mode, string keyType, List<string>? alternativeNames = null, List<string>? alternativeAddresses = null, AsymmetricKeyParameter? caPrivateKey = null, X509Certificate? caCertificate = null, bool withCa = false)
 		{
 			X509V3CertificateGenerator certificateGenerator = new X509V3CertificateGenerator();
 			Org.BouncyCastle.Math.BigInteger serial = new Org.BouncyCastle.Math.BigInteger(serialNumber.Value.ToString());
@@ -234,24 +254,33 @@ namespace CertificateGenerator
 				certificateGenerator.AddExtension(X509Extensions.SubjectAlternativeName, false, subjectAlternativeNames);
 			}
 
+			// 키 타입에 따라 적절한 서명 알고리즘 선택
+			string signatureAlgorithm = keyType.ToUpper() == "EC" 
+				? X9ObjectIdentifiers.ECDsaWithSha256.ToString()
+                : PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString();
+
 			ISignatureFactory signatureFactory;
 			X509Certificate certificate;
 			switch (mode)
 			{
 				case GenerateMode.CA:
-					signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), privateKey);
+					signatureFactory = new Asn1SignatureFactory(signatureAlgorithm, privateKey);
 					certificate = certificateGenerator.Generate(signatureFactory);
 					SignCertificate(certificate, publicKey);
 					break;
 				case GenerateMode.SERVER when caCertificate is null:
 					// Self-signed server certificate
-					signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), privateKey);
+					signatureFactory = new Asn1SignatureFactory(signatureAlgorithm, privateKey);
 					certificate = certificateGenerator.Generate(signatureFactory);
 					SignCertificate(certificate, publicKey);
 					break;
 				default:
 					ArgumentNullException.ThrowIfNull(caCertificate);
-					signatureFactory = new Asn1SignatureFactory(PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString(), caPrivateKey);
+					// CA 키 타입에 따라 서명 알고리즘 결정 (CA 키가 EC인지 RSA인지 확인)
+					string caSignatureAlgorithm = caPrivateKey is ECPrivateKeyParameters 
+						? X9ObjectIdentifiers.ECDsaWithSha256.ToString()
+                        : PkcsObjectIdentifiers.Sha256WithRsaEncryption.ToString();
+					signatureFactory = new Asn1SignatureFactory(caSignatureAlgorithm, caPrivateKey);
 					certificate = certificateGenerator.Generate(signatureFactory);
 					SignCertificate(certificate, caCertificate.GetPublicKey());
 					break;
@@ -325,12 +354,12 @@ namespace CertificateGenerator
 			caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
 			X509CertificateEntry[] caCertificateEntries = caStore.GetCertificateChain(caStore.Aliases.First());
 
-			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			GenerateKey(configuration.KeySize.Value, configuration.ECCurveName, configuration.KeyType, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
 			X509Name dn = GenerateDN(configuration, caCertificateEntries[0].Certificate);
 			
 			AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
 
-			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.SERVER, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.SERVER, configuration.KeyType, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
 
 			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? [certificate, ..caCertificateEntries.Select(e => e.Certificate)] : [certificate]);
 
@@ -379,12 +408,12 @@ namespace CertificateGenerator
 			caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
 			X509CertificateEntry[] caCertificateEntries = caStore.GetCertificateChain(caStore.Aliases.First());
 
-			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			GenerateKey(configuration.KeySize.Value, configuration.ECCurveName, configuration.KeyType, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
 			X509Name dn = GenerateDN(configuration, caCertificateEntries[0].Certificate);
 
 			AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
 
-			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CLIENT, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CLIENT, configuration.KeyType, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
 
 			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? [certificate, .. caCertificateEntries.Select(e => e.Certificate)] : [certificate]);
 
@@ -410,12 +439,12 @@ namespace CertificateGenerator
 			caStore.Load(caStoreStream, configuration.CAStorePassword.ToCharArray());
 			X509CertificateEntry[] caCertificateEntries = caStore.GetCertificateChain(caStore.Aliases.First());
 
-			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			GenerateKey(configuration.KeySize.Value, configuration.ECCurveName, configuration.KeyType, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
 			X509Name dn = GenerateDN(configuration, caCertificateEntries[0].Certificate);
 
 			AsymmetricKeyParameter caPrivateKey = LoadPrivateKey(configuration.CAKeyFile);
 
-			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CODESIGN, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.CODESIGN, configuration.KeyType, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses, caPrivateKey: caPrivateKey, caCertificateEntries[0].Certificate, configuration.WithCA.HasValue && configuration.WithCA.Value);
 
 			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, configuration.WithCA.HasValue && configuration.WithCA.Value ? [certificate, ..caCertificateEntries.Select(e => e.Certificate)] : [certificate]);
 
@@ -433,10 +462,10 @@ namespace CertificateGenerator
 
 			SecureRandom secureRandom = new SecureRandom();
 
-			GenerateKey(configuration.KeySize.Value, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
+			GenerateKey(configuration.KeySize.Value, configuration.ECCurveName, configuration.KeyType, configuration.KeyFile, secureRandom, out AsymmetricCipherKeyPair keyPair, out PrivateKeyInfo privateKeyInfo, out SubjectPublicKeyInfo subjectPublicKeyInfo);
 			X509Name dn = GenerateDN(configuration, null);
 
-			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.SERVER, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses);
+			X509Certificate certificate = GenerateCertificate(dn, configuration.Days.Value, keyPair.Public, subjectPublicKeyInfo, keyPair.Private, configuration.CertificateFile, GenerateMode.SERVER, configuration.KeyType, alternativeNames: configuration.AlternativeNames, alternativeAddresses: configuration.AlternativeAddresses);
 
 			ArgumentNullException.ThrowIfNull(configuration.Alias);
 			GenerateCertificateStore(configuration.Alias, keyPair.Private, configuration.StoreFile, configuration.StorePassword, secureRandom, certificate);

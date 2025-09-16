@@ -1,6 +1,7 @@
 OrganizationName: MiddleCA
 CommonName: localhost
 Days: 7300
+KeyType: RSA
 KeyFile: "keys/middle_ca.key"
 CertificateFile: "certs/middle_ca.crt"
 StoreFile: "store/middle_ca.p12"

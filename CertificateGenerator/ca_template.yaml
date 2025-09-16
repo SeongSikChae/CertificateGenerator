@@ -1,6 +1,7 @@
 OrganizationName: CA
 CommonName: localhost
 Days: 7300
+KeyType: RSA
 KeyFile: "keys/ca.key"
 CertificateFile: "certs/ca.crt"
 StoreFile: "store/ca.p12"

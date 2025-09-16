@@ -1,6 +1,7 @@
 OrganizationName: SelfSigned Server
 CommonName: localhost
 Days: 3650
+KeyType: RSA
 KeyFile: "keys/selfsigned-server.key"
 CertificateFile: "certs/selfsigned-server.crt"
 StoreFile: "store/selfsigned-server.p12"
