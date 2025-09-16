@@ -11,7 +11,7 @@ namespace CertificateGenerator
         public string ECCurveName { get; set; } = null!;
 
         [Property(PropertyType.STRING, DefaultValue = "RSA")]
-        public string KeyType { get; set; } = "RSA";
+        public string KeyType { get; set; } = null!;
 
         [Property(PropertyType.STRING, DefaultValue = "KR")]
         public string? CountryName { get; set; }
