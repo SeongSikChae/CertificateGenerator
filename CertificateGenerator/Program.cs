@@ -495,7 +495,7 @@ namespace CertificateGenerator
 				certIndex++;
 			}
 
-            Pkcs12Store store = new Pkcs12StoreBuilder().SetKeyAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).SetCertAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).Build();
+            Pkcs12Store store = new Pkcs12StoreBuilder().SetCertAlgorithm(PkcsObjectIdentifiers.PbeWithShaAnd3KeyTripleDesCbc).Build();
             foreach (KeyValuePair<string, X509Certificate> pair in certificates)
 				store.SetCertificateEntry(pair.Key, new X509CertificateEntry(pair.Value));
 
