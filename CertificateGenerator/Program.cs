@@ -201,16 +201,18 @@ namespace CertificateGenerator
 			certificateGenerator.SetNotAfter(notBefore.AddDays(days));
 			certificateGenerator.SetPublicKey(publicKey);
 			certificateGenerator.AddExtension(X509Extensions.SubjectKeyIdentifier, false, new SubjectKeyIdentifier(subjectPublicKeyInfo));
-			certificateGenerator.AddExtension(X509Extensions.AuthorityKeyIdentifier, false, new AuthorityKeyIdentifier(caCertificate is null ? subjectPublicKeyInfo : caCertificate.SubjectPublicKeyInfo,
-				new GeneralNames(new GeneralName(caCertificate is null ? dn : caCertificate.SubjectDN)), caCertificate is null ? serial : caCertificate.SerialNumber));
+			certificateGenerator.AddExtension(X509Extensions.AuthorityKeyIdentifier, false, new AuthorityKeyIdentifier(caCertificate is null ? subjectPublicKeyInfo : caCertificate.SubjectPublicKeyInfo));
 
 			Asn1EncodableVector purposes = new Asn1EncodableVector();
 			switch (mode)
 			{
 				case GenerateMode.CA:
-				case GenerateMode.MIDDLE_CA:
-					certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.KeyCertSign | KeyUsage.CrlSign));
-					certificateGenerator.AddExtension(X509Extensions.BasicConstraints, false, new BasicConstraints(true));
+                    certificateGenerator.AddExtension(X509Extensions.KeyUsage, true, new KeyUsage(KeyUsage.KeyCertSign | KeyUsage.CrlSign));
+                    certificateGenerator.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(1));
+					break;
+                case GenerateMode.MIDDLE_CA:
+					certificateGenerator.AddExtension(X509Extensions.KeyUsage, true, new KeyUsage(KeyUsage.KeyCertSign | KeyUsage.CrlSign));
+					certificateGenerator.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(0));
 					break;
 				case GenerateMode.CLIENT:
 					certificateGenerator.AddExtension(X509Extensions.KeyUsage, false, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
